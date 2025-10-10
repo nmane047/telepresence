@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"regexp"
 	"slices"
 	"strings"
 	"time"
@@ -101,7 +102,12 @@ func pathsCanMatch(filter1, filter2 string) bool {
 	return valuesCanMatch(matcher.PathValue(filter1), matcher.PathValue(filter2))
 }
 
-// valuesCanMatch determines if two matcher.Values can match the same string value.
+// valuesCanMatch determines if two matcher.Value objects could potentially match the same input.
+// It is used to detect conflicts between intercept path filters.
+// Supported operations: Equal, Prefix, Regex.
+//
+// The logic ensures that overlapping or equivalent patterns (e.g., /api/* vs /api/v1/*)
+// are treated as conflicts, while unrelated ones (e.g., /api/v1/* vs /api/v2/*) are not.
 func valuesCanMatch(v1, v2 matcher.Value) bool {
 	op1 := v1.Op()
 	op2 := v2.Op()
@@ -114,7 +120,7 @@ func valuesCanMatch(v1, v2 matcher.Value) bool {
 		return pattern1 == pattern2
 
 	case op1 == matcher.ValueOpPrefix && op2 == matcher.ValueOpPrefix:
-		// Both prefixes - conflict if one is prefix of the other
+		// Both are prefixes - conflict if one is prefix of the other
 		return strings.HasPrefix(pattern1, pattern2) || strings.HasPrefix(pattern2, pattern1)
 
 	case op1 == matcher.ValueOpPrefix && op2 == matcher.ValueOpEqual:
@@ -124,11 +130,80 @@ func valuesCanMatch(v1, v2 matcher.Value) bool {
 	case op1 == matcher.ValueOpEqual && op2 == matcher.ValueOpPrefix:
 		// Exact value matches prefix if it starts with the prefix
 		return strings.HasPrefix(pattern1, pattern2)
+
+	case op1 == matcher.ValueOpRegex && op2 == matcher.ValueOpRegex:
+		// --- Regex vs Regex ---
+		if pattern1 == pattern2 {
+			return true
+		}
+
+		prefix1 := regexLiteralPrefix(pattern1)
+		prefix2 := regexLiteralPrefix(pattern2)
+
+		// If one regex prefix starts with the other, potential overlap.
+		return strings.HasPrefix(prefix1, prefix2) || strings.HasPrefix(prefix2, prefix1)
+
+	case op1 == matcher.ValueOpRegex && (op2 == matcher.ValueOpEqual || op2 == matcher.ValueOpPrefix):
+		return regexCanMatchValue(pattern1, op2, pattern2)
+
+	case op2 == matcher.ValueOpRegex && (op1 == matcher.ValueOpEqual || op1 == matcher.ValueOpPrefix):
+		return regexCanMatchValue(pattern2, op1, pattern1)
 	}
 
-	// Conservative: assume regexes can overlap
-	// Proper regex intersection is computationally expensive
+	// Fallback: conservatively assume potential match
 	return true
+}
+
+// regexCanMatchValue checks if a regex could match an equal or prefix value.
+// Conservative: returns true if regex is invalid or prefix is empty.
+func regexCanMatchValue(regexPattern string, op matcher.ValueOp, value string) bool {
+	if value == "" {
+		return true
+	}
+
+	switch op {
+	case matcher.ValueOpEqual:
+		re, err := regexp.Compile(regexPattern)
+		if err != nil {
+			return true // invalid regex → assume conflict
+		}
+		return re.MatchString(value)
+
+	case matcher.ValueOpPrefix:
+		prefix := regexLiteralPrefix(regexPattern)
+		if prefix == "" {
+			return true // can't determine → assume overlap
+		}
+		return strings.HasPrefix(value, prefix) || strings.HasPrefix(prefix, value)
+	}
+
+	// fallback
+	return true
+}
+
+// regexLiteralPrefix safely extracts a literal prefix from a regex pattern.
+// Stops at first regex metacharacter. Conservative for complex regexes.
+func regexLiteralPrefix(pattern string) string {
+	if pattern == "" {
+		return ""
+	}
+
+	// Remove leading '^' (safe: TrimPrefix is a no-op if not present)
+	pattern = strings.TrimPrefix(pattern, "^")
+
+	// Remove trailing '.*' (safe: TrimSuffix is a no-op if not present)
+	pattern = strings.TrimSuffix(pattern, ".*")
+
+	var prefix strings.Builder
+	for _, r := range pattern {
+		// Stop at any regex metacharacter
+		if strings.ContainsRune("[](){}?+*|$.\\^", r) {
+			break
+		}
+		prefix.WriteRune(r)
+	}
+
+	return prefix.String()
 }
 
 // explainConflict generates a human-readable explanation of why two intercept specs conflict.
