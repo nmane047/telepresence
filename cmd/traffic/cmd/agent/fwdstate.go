@@ -209,7 +209,7 @@ func regexCanMatchValue(regexPattern string, op matcher.ValueOp, value string) b
 		}
 		return re.MatchString(value)
 	}
-	//fallback
+	// fallback
 	return true
 }
 
