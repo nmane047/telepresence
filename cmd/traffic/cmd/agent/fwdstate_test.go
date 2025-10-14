@@ -643,7 +643,7 @@ func TestInterceptSpecsConflict(t *testing.T) {
 			conflicts: true,
 		},
 		{
-			name: "Header regex - identical wildcard patterns should conflict",
+			name: "Header regex - patterns with common suffix should conflict",
 			spec1: &manager.InterceptSpec{
 				Mechanism: "http",
 				HeaderFilters: map[string]string{
