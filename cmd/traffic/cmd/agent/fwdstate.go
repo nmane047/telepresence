@@ -137,11 +137,32 @@ func valuesCanMatch(v1, v2 matcher.Value) bool {
 			return true
 		}
 
+		anchored1 := strings.HasPrefix(pattern1, "^")
+		anchored2 := strings.HasPrefix(pattern2, "^")
+
 		prefix1 := regexLiteralPrefix(pattern1)
 		prefix2 := regexLiteralPrefix(pattern2)
 
-		// If one regex prefix starts with the other, potential overlap.
-		return strings.HasPrefix(prefix1, prefix2) || strings.HasPrefix(prefix2, prefix1)
+		// Both anchored → only overlap if one is prefix of the other
+		if anchored1 && anchored2 {
+			return strings.HasPrefix(prefix1, prefix2) || strings.HasPrefix(prefix2, prefix1)
+		}
+
+		// Both unanchored → overlap if their literal parts contain each other
+		if !anchored1 && !anchored2 {
+			return strings.Contains(prefix1, prefix2) || strings.Contains(prefix2, prefix1)
+		}
+
+		// One anchored, one not → overlap if anchored prefix appears in unanchored literal
+		if anchored1 && !anchored2 {
+			return strings.Contains(prefix2, prefix1)
+		}
+		if anchored2 && !anchored1 {
+			return strings.Contains(prefix1, prefix2)
+		}
+
+		// Fallback conservative
+		return true
 
 	case op1 == matcher.ValueOpRegex && (op2 == matcher.ValueOpEqual || op2 == matcher.ValueOpPrefix):
 		return regexCanMatchValue(pattern1, op2, pattern2)
@@ -155,11 +176,13 @@ func valuesCanMatch(v1, v2 matcher.Value) bool {
 }
 
 // regexCanMatchValue checks if a regex could match an equal or prefix value.
-// Conservative: returns true if regex is invalid or prefix is empty.
+// Conservative: returns true if regex is invalid or overlap can't be ruled out.
 func regexCanMatchValue(regexPattern string, op matcher.ValueOp, value string) bool {
 	if value == "" {
 		return true
 	}
+
+	anchored := strings.HasPrefix(regexPattern, "^")
 
 	switch op {
 	case matcher.ValueOpEqual:
@@ -170,14 +193,23 @@ func regexCanMatchValue(regexPattern string, op matcher.ValueOp, value string) b
 		return re.MatchString(value)
 
 	case matcher.ValueOpPrefix:
-		prefix := regexLiteralPrefix(regexPattern)
-		if prefix == "" {
-			return true // can't determine → assume overlap
+		if anchored {
+			// Anchored regex → behaves like HasPrefix using literal prefix
+			prefix := regexLiteralPrefix(regexPattern)
+			if prefix == "" {
+				return true
+			}
+			return strings.HasPrefix(value, prefix) || strings.HasPrefix(prefix, value)
 		}
-		return strings.HasPrefix(value, prefix) || strings.HasPrefix(prefix, value)
-	}
 
-	// fallback
+		// Unanchored regex → can match anywhere in the string
+		re, err := regexp.Compile(regexPattern)
+		if err != nil {
+			return true // invalid regex → assume conflict
+		}
+		return re.MatchString(value)
+	}
+	//fallback
 	return true
 }
 
@@ -188,15 +220,15 @@ func regexLiteralPrefix(pattern string) string {
 		return ""
 	}
 
-	// Remove leading '^' (safe: TrimPrefix is a no-op if not present)
-	pattern = strings.TrimPrefix(pattern, "^")
+	isAnchored := strings.HasPrefix(pattern, "^")
+	if isAnchored {
+		pattern = strings.TrimPrefix(pattern, "^")
+	}
 
-	// Remove trailing '.*' (safe: TrimSuffix is a no-op if not present)
 	pattern = strings.TrimSuffix(pattern, ".*")
 
 	var prefix strings.Builder
 	for _, r := range pattern {
-		// Stop at any regex metacharacter
 		if strings.ContainsRune("[](){}?+*|$.\\^", r) {
 			break
 		}

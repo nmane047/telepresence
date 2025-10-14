@@ -656,7 +656,7 @@ func TestInterceptSpecsConflict(t *testing.T) {
 					"x-user": "bertil::adam::.*",
 				},
 			},
-			conflicts: false,
+			conflicts: true,
 		},
 		{
 			name: "Header regex - different prefixes in wildcard should not conflict",
@@ -903,7 +903,7 @@ func TestInterceptSpecsConflict(t *testing.T) {
 			conflicts: false,
 		},
 		{
-			name: "Regex vs different Prefix - non-anchored - should not conflict",
+			name: "Regex vs different Prefix - non-anchored - should conflict",
 			spec1: &manager.InterceptSpec{
 				Mechanism:   "http",
 				PathFilters: []string{":path-regex:/api/"},
@@ -912,10 +912,10 @@ func TestInterceptSpecsConflict(t *testing.T) {
 				Mechanism:   "http",
 				PathFilters: []string{":path-prefix:/foo/api/"},
 			},
-			conflicts: false,
+			conflicts: true,
 		},
 		{
-			name: "Regex vs overlapping Regex - non-anchored - should not conflict",
+			name: "Regex vs overlapping Regex - non-anchored - should conflict",
 			spec1: &manager.InterceptSpec{
 				Mechanism:   "http",
 				PathFilters: []string{":path-regex:/api/"},
@@ -924,7 +924,7 @@ func TestInterceptSpecsConflict(t *testing.T) {
 				Mechanism:   "http",
 				PathFilters: []string{":path-regex:/foo/api/"},
 			},
-			conflicts: false,
+			conflicts: true,
 		},
 	}
 
